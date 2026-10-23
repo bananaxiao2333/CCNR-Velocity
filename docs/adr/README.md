@@ -4,6 +4,7 @@
 
 | 编号 | 标题 | 状态 |
 |---|---|---|
-| [0001](0001-velocity-sidecar.md) | Velocity 侧车：同步准入 + 有界遥测 | 接受 |
+| [0001](0001-velocity-sidecar.md) | Velocity 侧车：同步准入 + 有界遥测 | 被 0002 取代 |
+| [0002](0002-device-code-login.md) | 登录改为 CCNR Pass 设备码 + limbo | 接受 |
 
 模板见 [template.md](template.md)。

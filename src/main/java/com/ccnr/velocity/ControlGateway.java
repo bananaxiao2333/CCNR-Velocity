@@ -10,6 +10,11 @@ public interface ControlGateway extends AutoCloseable {
 
   void report(ReportEvent event) throws ControlUnavailableException;
 
+  DeviceLoginInfo beginDeviceLogin(String playerUuid, String username, String proxyId)
+      throws ControlUnavailableException;
+
+  DeviceLoginState deviceLoginStatus(String loginId) throws ControlUnavailableException;
+
   @Override
   default void close() {}
 }

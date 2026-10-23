@@ -1,0 +1,9 @@
+{
+  "id": "ccnr-control",
+  "name": "CCNR Control",
+  "version": "0.1.0",
+  "description": "CCNR 统一准入与统计",
+  "authors": ["CCNR"],
+  "dependencies": [],
+  "main": "com.ccnr.velocity.ControlPlugin"
+}

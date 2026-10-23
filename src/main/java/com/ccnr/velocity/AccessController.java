@@ -4,9 +4,13 @@ package com.ccnr.velocity;
 
 import java.util.Optional;
 import java.util.function.LongSupplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** 准入编排：先查缓存，失败按 fail-open 兜底。 */
 public final class AccessController {
+
+  private static final Logger LOGGER = LoggerFactory.getLogger(AccessController.class);
 
   private final ControlGateway gateway;
   private final DecisionCache cache;
@@ -36,6 +40,7 @@ public final class AccessController {
       cache.put(playerUuid, decision, now);
       return decision;
     } catch (ControlUnavailableException error) {
+      LOGGER.warn("准入 RPC 失败：{}", error.getMessage(), error);
       if (failOpen) {
         return AccessDecision.allow(0);
       }

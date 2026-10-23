@@ -1,12 +1,13 @@
 # CCNR-Velocity
 
-Velocity 代理侧的 **准入与遥测** 插件：登录时问 CCNR-Data「能不能进」，在线时把会话事件报回去。
+Velocity 代理侧的 **CCNR Pass 设备码登录 + 会话遥测** 插件。
 Java 17 · Velocity 3.4 · gRPC `control.v1`。
 
 ```
-玩家 ──► Velocity ──► ccnr-control ──gRPC──► CCNR-Data（control.v1）
-                          │  LoginEvent：同步决策（1s deadline）
-                          │  Session：开始 / 心跳 / 转服 / 结束 / 登录失败
+玩家 ──► Velocity ──► limbo(auth) ──► CCNR Pass 浏览器授权
+                          │  BeginDeviceLogin / 轮询状态
+                          │  通过后：AuthorizePlayer + 送 lobby
+                          │  Session：开始 / 心跳 / 转服 / 结束
                           └─ 有界队列异步上报，绝不阻塞游戏线程
 ```
 
@@ -14,11 +15,11 @@ Java 17 · Velocity 3.4 · gRPC `control.v1`。
 
 | 时机 | 动作 |
 |---|---|
-| `LoginEvent` | 调 `AuthorizePlayer`；拒绝时给玩家可读原因。结果按 UUID 缓存 TTL 秒 |
-| `ServerConnectedEvent` | 首次连接 → `SESSION_STARTED`；换服 → `SERVER_SWITCHED` |
-| 定时（默认 60s） | 对每个在线会话发 `SESSION_HEARTBEAT`（服务端只刷新 `last_seen`） |
-| `DisconnectEvent` | `SESSION_ENDED`，原因取 Velocity 的 `LoginStatus` |
-| 登录被拒 | `LOGIN_DENIED` + 拒绝原因（供统计） |
+| 连到 `auth` 服 | 调 `BeginDeviceLogin`，把验证地址 + `user_code` 发给玩家；轮询状态 |
+| Pass 授权通过 | 调 `AuthorizePlayer` 做封禁/角色检查，通过后送 `lobby` |
+| 连到 `lobby` 或其它游戏服 | 未经本连接验证则直接断开；验证过 → 会话开始/转服 |
+| 定时（默认 60s） | 对每个在线会话发 `SESSION_HEARTBEAT` |
+| `DisconnectEvent` | `SESSION_ENDED`，正常离开记 `quit` |
 | 控制面不可达 | 在线玩家不受影响；新登录按 `fail-open`（默认 `false` = 拒绝） |
 
 ## 构建与门禁
@@ -45,7 +46,8 @@ Java 17 · Velocity 3.4 · gRPC `control.v1`。
 
 1. 把 `build/libs/ccnr-control-velocity-0.1.0.jar` 放进 Velocity 的 `plugins/`。
 2. 启动一次，生成 `plugins/ccnr-control/config.properties`。
-3. 填 `endpoint` / `token`，重启。
+3. 填 `endpoint` / `token`，并确认 `velocity.toml` 里有 `auth`（limbo）与 `lobby`（游戏服）。
+4. `try = ["auth"]`：所有登录先进 limbo，插件验证通过后再送 lobby。
 
 ## 配置
 
@@ -54,7 +56,10 @@ Java 17 · Velocity 3.4 · gRPC `control.v1`。
 | `endpoint` | 必填 | CCNR-Data gRPC 地址，`host:port` |
 | `token` | 空 | `control.v1` Bearer token；服务端未开鉴权时留空 |
 | `fail-open` | `false` | 控制面故障时是否放行新登录；生产保持 `false` |
-| `timeout-millis` | `1000` | 单次 gRPC 超时，100–10000 |
+| `timeout-millis` | `1000` | 普通 gRPC 超时，100–10000 |
+| `authorize-timeout-millis` | `3000` | 准入/发起登录超时（首次要取 Casdoor token），500–15000 |
+| `auth-server` | `auth` | limbo 服名，必须在 `velocity.toml` 的 `[servers]` 中 |
+| `lobby-server` | `lobby` | 验证通过后送往的游戏服名 |
 | `cache-ttl-seconds` | `60` | 本地准入缓存；服务端返回的 `cache_ttl_seconds` 优先 |
 | `heartbeat-seconds` | `60` | 心跳间隔，10–600 |
 | `queue-capacity` | `8192` | 遥测队列上限，满了丢新事件并告警 |

@@ -3,10 +3,8 @@
 package com.ccnr.velocity;
 
 import com.ccnr.velocity.ReportEvent.ReportKind;
-import com.velocitypowered.api.event.ResultedEvent.ComponentResult;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.connection.DisconnectEvent;
-import com.velocitypowered.api.event.connection.LoginEvent;
 import com.velocitypowered.api.event.player.ServerConnectedEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
@@ -14,6 +12,7 @@ import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
+import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.scheduler.ScheduledTask;
 import java.io.IOException;
 import java.io.InputStream;
@@ -21,13 +20,22 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import javax.inject.Inject;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.event.ClickEvent;
 import org.slf4j.Logger;
 
-/** 登录准入 + 会话遥测。控制面故障时不阻塞在线玩家。 */
+/**
+ * CCNR Pass 设备码登录 + 会话遥测。
+ *
+ * <p>玩家先连 auth 服，完成 Pass 授权后才被送到 lobby；授权与这条连接绑定， 不依赖名字/重连，也不会出现"换个客户端用同一个名字就进来"。
+ */
 @Plugin(
     id = "ccnr-control",
     name = "CCNR Control",
@@ -42,7 +50,11 @@ public final class ControlPlugin {
   private final Logger logger;
   private final Path dataDirectory;
   private final SessionRegistry sessions = new SessionRegistry();
+  private final Set<String> verified = ConcurrentHashMap.newKeySet();
+  private final Map<String, PendingLogin> pending = new ConcurrentHashMap<>();
 
+  private PluginConfig config;
+  private ControlGateway gateway;
   private AccessController access;
   private TelemetryQueue telemetry;
   private ScheduledTask heartbeat;
@@ -57,22 +69,23 @@ public final class ControlPlugin {
   @Subscribe
   public void onProxyInitialize(ProxyInitializeEvent event) {
     try {
-      PluginConfig config = loadConfig();
-      GrpcControlGateway gateway = new GrpcControlGateway(config);
-      this.access = new AccessController(gateway, config.failOpen(), MAX_CACHE_ENTRIES);
-      this.telemetry = new TelemetryQueue(gateway, config.queueCapacity(), logger);
-      this.telemetry.start();
-      this.heartbeat =
+      config = loadConfig();
+      gateway = new GrpcControlGateway(config);
+      access = new AccessController(gateway, config.failOpen(), MAX_CACHE_ENTRIES);
+      telemetry = new TelemetryQueue(gateway, config.queueCapacity(), logger);
+      telemetry.start();
+      heartbeat =
           server
               .getScheduler()
               .buildTask(this, this::heartbeatAll)
               .repeat(Duration.ofSeconds(config.heartbeatSeconds()))
               .schedule();
       logger.info(
-          "CCNR 控制面已连接：{}（fail-open={}，超时 {} ms）",
+          "CCNR 控制面已连接：{}（auth={}，lobby={}，fail-open={}）",
           config.endpoint(),
-          config.failOpen(),
-          config.timeoutMillis());
+          config.authServer(),
+          config.lobbyServer(),
+          config.failOpen());
     } catch (IOException | IllegalArgumentException error) {
       logger.error("CCNR 控制面配置无效，插件停用：{}", error.getMessage());
       shutdown();
@@ -80,37 +93,125 @@ public final class ControlPlugin {
   }
 
   @Subscribe
-  public void onLogin(LoginEvent event) {
-    if (access == null) {
+  public void onServerConnected(ServerConnectedEvent event) {
+    if (config == null || gateway == null) {
       return;
     }
     Player player = event.getPlayer();
-    String serverId = currentServer(player);
-    AccessDecision decision =
-        access.authorize(player.getUniqueId().toString(), player.getUsername(), serverId);
-    if (decision.allowed()) {
-      logger.debug("准入通过 {}@{}", player.getUsername(), serverId);
+    String serverId = event.getServer().getServerInfo().getName();
+    if (serverId.equals(config.authServer())) {
+      holdInAuth(player);
       return;
     }
-    report(
-        ReportKind.LOGIN_DENIED,
-        "",
-        player.getUniqueId().toString(),
-        player.getUsername(),
-        serverId,
-        "",
-        decision.reason(),
-        "");
-    String message = decision.message().isBlank() ? "无法进入服务器" : decision.message();
-    event.setResult(ComponentResult.denied(Component.text(message)));
-    logger.info("拒绝 {}：{}（{}）", player.getUsername(), decision.reason(), message);
+    if (!verified.contains(player.getUniqueId().toString())) {
+      logger.warn("{} 未经 Pass 验证就尝试进入 {}，断开", player.getUsername(), serverId);
+      player.disconnect(Component.text("请先完成 CCNR Pass 登录后再进入游戏服务器"));
+      return;
+    }
+    startOrSwitchSession(player, serverId);
   }
 
-  @Subscribe
-  public void onServerConnected(ServerConnectedEvent event) {
-    String playerUuid = event.getPlayer().getUniqueId().toString();
-    String username = event.getPlayer().getUsername();
-    String serverId = event.getServer().getServerInfo().getName();
+  private void holdInAuth(Player player) {
+    String playerUuid = player.getUniqueId().toString();
+    if (verified.contains(playerUuid)) {
+      sendToLobby(player);
+      return;
+    }
+    if (pending.containsKey(playerUuid)) {
+      return;
+    }
+    try {
+      DeviceLoginInfo info =
+          gateway.beginDeviceLogin(playerUuid, player.getUsername(), config.proxyId());
+      PendingLogin state = new PendingLogin(info);
+      pending.put(playerUuid, state);
+      player.sendMessage(deviceLoginMessage(info));
+      state.task =
+          server
+              .getScheduler()
+              .buildTask(this, () -> pollDeviceLogin(player, state))
+              .repeat(Duration.ofSeconds(Math.max(1, info.interval())))
+              .schedule();
+      logger.info(
+          "等待 {} 完成 CCNR Pass 登录（{}，{} 秒内有效）",
+          player.getUsername(),
+          info.userCode(),
+          info.expiresIn());
+    } catch (ControlUnavailableException error) {
+      logger.warn("无法发起 CCNR Pass 登录：{}", error.getMessage());
+      player.disconnect(Component.text("CCNR Pass 暂时不可用，请稍后再试"));
+    }
+  }
+
+  private void pollDeviceLogin(Player player, PendingLogin state) {
+    if (!player.isActive() || pending.get(player.getUniqueId().toString()) != state) {
+      cancel(state);
+      return;
+    }
+    DeviceLoginState status;
+    try {
+      status = gateway.deviceLoginStatus(state.info.loginId());
+    } catch (ControlUnavailableException error) {
+      logger.warn("查询 CCNR Pass 登录状态失败：{}", error.getMessage());
+      return;
+    }
+    switch (status.state()) {
+      case PENDING -> {
+        return;
+      }
+      case APPROVED -> finishLogin(player, state, status);
+      default -> {
+        cancel(state);
+        pending.remove(player.getUniqueId().toString());
+        String message = status.message().isBlank() ? "CCNR Pass 登录失败或已过期" : status.message();
+        logger.info("{} CCNR Pass 登录未通过：{}", player.getUsername(), message);
+        player.disconnect(Component.text(message));
+      }
+    }
+  }
+
+  private void finishLogin(Player player, PendingLogin state, DeviceLoginState status) {
+    pending.remove(player.getUniqueId().toString());
+    AccessDecision decision =
+        access.authorize(
+            player.getUniqueId().toString(), player.getUsername(), config.lobbyServer());
+    if (!decision.allowed()) {
+      logger.info("{} 通过 Pass 登录但准入被拒：{}", player.getUsername(), decision.reason());
+      player.disconnect(
+          Component.text(decision.message().isBlank() ? "你无法进入服务器" : decision.message()));
+      return;
+    }
+    verified.add(player.getUniqueId().toString());
+    logger.info("CCNR Pass 登录通过：{}（{}）", player.getUsername(), status.casdoorUserId());
+    player.sendMessage(Component.text("CCNR Pass 登录成功，正在进入游戏服…"));
+    sendToLobby(player);
+    // 最后再取消自己：先 cancel 会中断当前线程，把 AuthorizePlayer 变成 CANCELLED。
+    cancel(state);
+  }
+
+  private Component deviceLoginMessage(DeviceLoginInfo info) {
+    return Component.text("请打开 ")
+        .append(
+            Component.text(info.verificationUri())
+                .clickEvent(ClickEvent.openUrl(info.verificationUri())))
+        .append(Component.text(" 完成 CCNR Pass 登录，验证码："))
+        .append(Component.text(info.userCode()))
+        .append(Component.text("（" + info.expiresIn() + " 秒内有效）"));
+  }
+
+  private void sendToLobby(Player player) {
+    Optional<RegisteredServer> lobby = server.getServer(config.lobbyServer());
+    if (lobby.isEmpty()) {
+      logger.error("velocity.toml 里没有 lobby 服：{}", config.lobbyServer());
+      player.disconnect(Component.text("游戏服暂不可用，请联系管理员"));
+      return;
+    }
+    player.createConnectionRequest(lobby.get()).fireAndForget();
+  }
+
+  private void startOrSwitchSession(Player player, String serverId) {
+    String playerUuid = player.getUniqueId().toString();
+    String username = player.getUsername();
     Optional<SessionRegistry.Session> current = sessions.current(playerUuid);
     if (current.isEmpty()) {
       sessions
@@ -155,25 +256,36 @@ public final class ControlPlugin {
   @Subscribe
   public void onDisconnect(DisconnectEvent event) {
     Player player = event.getPlayer();
+    String playerUuid = player.getUniqueId().toString();
+    PendingLogin state = pending.remove(playerUuid);
+    if (state != null) {
+      cancel(state);
+    }
+    verified.remove(playerUuid);
+    // SUCCESSFUL_LOGIN 是"正常登录后离开"，对会话语义就是 quit。
+    String endReason =
+        event.getLoginStatus() == DisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN
+            ? "quit"
+            : event.getLoginStatus().name().toLowerCase(Locale.ROOT);
     sessions
-        .end(player.getUniqueId().toString())
+        .end(playerUuid)
         .ifPresent(
             session -> {
               logger.info(
                   "会话结束 {}@{}：{}（{}）",
                   player.getUsername(),
                   session.serverId(),
-                  event.getLoginStatus().name(),
+                  endReason,
                   session.sessionId());
               report(
                   ReportKind.SESSION_ENDED,
                   session.sessionId(),
-                  player.getUniqueId().toString(),
+                  playerUuid,
                   player.getUsername(),
                   session.serverId(),
                   "",
                   "",
-                  event.getLoginStatus().name());
+                  endReason);
             });
   }
 
@@ -223,13 +335,6 @@ public final class ControlPlugin {
             Instant.now()));
   }
 
-  private String currentServer(Player player) {
-    return player
-        .getCurrentServer()
-        .map(connection -> connection.getServerInfo().getName())
-        .orElse("");
-  }
-
   private PluginConfig loadConfig() throws IOException {
     Files.createDirectories(dataDirectory);
     Path configFile = dataDirectory.resolve("config.properties");
@@ -244,8 +349,17 @@ public final class ControlPlugin {
     return PluginConfig.load(configFile);
   }
 
+  private static void cancel(PendingLogin state) {
+    ScheduledTask task = state.task;
+    if (task != null) {
+      task.cancel();
+    }
+  }
+
   private void shutdown() {
     logger.info("CCNR 控制面插件停止，清理 {} 条在线会话", sessions.size());
+    pending.values().forEach(ControlPlugin::cancel);
+    pending.clear();
     if (heartbeat != null) {
       heartbeat.cancel();
       heartbeat = null;
@@ -254,6 +368,19 @@ public final class ControlPlugin {
       telemetry.close();
       telemetry = null;
     }
+    if (gateway != null) {
+      gateway.close();
+      gateway = null;
+    }
     access = null;
+  }
+
+  private static final class PendingLogin {
+    private final DeviceLoginInfo info;
+    private volatile ScheduledTask task;
+
+    private PendingLogin(DeviceLoginInfo info) {
+      this.info = info;
+    }
   }
 }

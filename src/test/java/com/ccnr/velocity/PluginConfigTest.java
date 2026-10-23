@@ -45,6 +45,8 @@ class PluginConfigTest {
     assertEquals(45, config.heartbeatSeconds());
     assertEquals(1024, config.queueCapacity());
     assertEquals("proxy-a", config.proxyId());
+    assertEquals("auth", config.authServer());
+    assertEquals("lobby", config.lobbyServer());
   }
 
   @Test
@@ -68,6 +70,20 @@ class PluginConfigTest {
                         timeout-millis=1
                         """);
     assertThrows(IllegalArgumentException.class, () -> PluginConfig.load(file));
+  }
+
+  @Test
+  void rejectsSameAuthAndLobbyServer() throws IOException {
+    Path file =
+        write(
+            """
+                        endpoint=127.0.0.1:8081
+                        auth-server=lobby
+                        lobby-server=lobby
+                        """);
+    IllegalArgumentException error =
+        assertThrows(IllegalArgumentException.class, () -> PluginConfig.load(file));
+    assertTrue(error.getMessage().contains("不能相同"));
   }
 
   @Test

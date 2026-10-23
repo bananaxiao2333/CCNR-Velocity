@@ -28,6 +28,16 @@ class AccessControllerTest {
 
     @Override
     public void report(ReportEvent event) {}
+
+    @Override
+    public DeviceLoginInfo beginDeviceLogin(String playerUuid, String username, String proxyId) {
+      throw new UnsupportedOperationException("not used in this test");
+    }
+
+    @Override
+    public DeviceLoginState deviceLoginStatus(String loginId) {
+      throw new UnsupportedOperationException("not used in this test");
+    }
   }
 
   @Test

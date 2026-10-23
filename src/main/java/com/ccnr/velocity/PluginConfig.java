@@ -16,10 +16,13 @@ public record PluginConfig(
     String token,
     boolean failOpen,
     int timeoutMillis,
+    int authorizeTimeoutMillis,
     int cacheTtlSeconds,
     int heartbeatSeconds,
     int queueCapacity,
-    String proxyId) {
+    String proxyId,
+    String authServer,
+    String lobbyServer) {
 
   private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z0-9][A-Za-z0-9_.:-]*");
 
@@ -32,6 +35,7 @@ public record PluginConfig(
     String token = properties.getProperty("token", "").trim();
     boolean failOpen = bool(properties, "fail-open", false);
     int timeout = integer(properties, "timeout-millis", 1000, 100, 10_000);
+    int authorizeTimeout = integer(properties, "authorize-timeout-millis", 3000, 500, 15_000);
     int cacheTtl = integer(properties, "cache-ttl-seconds", 60, 0, 3600);
     int heartbeat = integer(properties, "heartbeat-seconds", 60, 10, 600);
     int queue = integer(properties, "queue-capacity", 8192, 128, 100_000);
@@ -39,8 +43,31 @@ public record PluginConfig(
     if (!IDENTIFIER.matcher(proxyId).matches()) {
       throw new IllegalArgumentException("proxy-id 只允许字母、数字与 _ . : -：" + proxyId);
     }
+    String authServer = identifier(properties, "auth-server", "auth");
+    String lobbyServer = identifier(properties, "lobby-server", "lobby");
+    if (authServer.equals(lobbyServer)) {
+      throw new IllegalArgumentException("auth-server 与 lobby-server 不能相同：" + authServer);
+    }
     return new PluginConfig(
-        endpoint, token, failOpen, timeout, cacheTtl, heartbeat, queue, proxyId);
+        endpoint,
+        token,
+        failOpen,
+        timeout,
+        authorizeTimeout,
+        cacheTtl,
+        heartbeat,
+        queue,
+        proxyId,
+        authServer,
+        lobbyServer);
+  }
+
+  private static String identifier(Properties properties, String key, String fallback) {
+    String value = properties.getProperty(key, fallback).trim();
+    if (!IDENTIFIER.matcher(value).matches()) {
+      throw new IllegalArgumentException(key + " 只允许字母、数字与 _ . : -：" + value);
+    }
+    return value;
   }
 
   private static String required(Properties properties, String key) {
