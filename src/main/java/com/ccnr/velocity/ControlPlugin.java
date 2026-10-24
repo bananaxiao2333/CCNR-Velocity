@@ -29,6 +29,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import javax.inject.Inject;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
+import net.kyori.adventure.text.event.HoverEvent;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
 import org.slf4j.Logger;
 
 /**
@@ -125,7 +128,13 @@ public final class ControlPlugin {
           gateway.beginDeviceLogin(playerUuid, player.getUsername(), config.proxyId());
       PendingLogin state = new PendingLogin(info);
       pending.put(playerUuid, state);
-      player.sendMessage(deviceLoginMessage(info));
+      sendLoginPrompt(player, info);
+      state.actionBar =
+          server
+              .getScheduler()
+              .buildTask(this, () -> sendActionBar(player, info))
+              .repeat(Duration.ofSeconds(2))
+              .schedule();
       state.task =
           server
               .getScheduler()
@@ -183,20 +192,45 @@ public final class ControlPlugin {
     }
     verified.add(player.getUniqueId().toString());
     logger.info("CCNR Pass 登录通过：{}（{}）", player.getUsername(), status.casdoorUserId());
-    player.sendMessage(Component.text("CCNR Pass 登录成功，正在进入游戏服…"));
+    player.sendMessage(
+        Component.text("✔ 验证通过，正在进入游戏服…", NamedTextColor.GREEN, TextDecoration.BOLD));
     sendToLobby(player);
     // 最后再取消自己：先 cancel 会中断当前线程，把 AuthorizePlayer 变成 CANCELLED。
     cancel(state);
   }
 
-  private Component deviceLoginMessage(DeviceLoginInfo info) {
-    return Component.text("请打开 ")
-        .append(
-            Component.text(info.verificationUri())
-                .clickEvent(ClickEvent.openUrl(info.verificationUri())))
-        .append(Component.text(" 完成 CCNR Pass 登录，验证码："))
-        .append(Component.text(info.userCode()))
-        .append(Component.text("（" + info.expiresIn() + " 秒内有效）"));
+  private void sendLoginPrompt(Player player, DeviceLoginInfo info) {
+    // 按钮独占一行，方便手机端直接点；下方给出机器人命令作为备用入口。
+    player.sendMessage(Component.text("━━━━━━━━ CCNR 通行证 ━━━━━━━━", NamedTextColor.GOLD));
+    player.sendMessage(Component.text("请完成验证以确认登录", NamedTextColor.YELLOW, TextDecoration.BOLD));
+    player.sendMessage(
+        Component.text(
+                "[ 点击登录 ]", NamedTextColor.GREEN, TextDecoration.BOLD, TextDecoration.UNDERLINED)
+            .clickEvent(ClickEvent.openUrl(info.verificationUri()))
+            .hoverEvent(
+                HoverEvent.showText(Component.text(info.verificationUri(), NamedTextColor.GRAY))));
+    player.sendMessage(Component.text("或者向 CCNR 行政服务发送下面的命令", NamedTextColor.GRAY));
+    player.sendMessage(
+        Component.text("/登录 " + info.userCode(), NamedTextColor.AQUA, TextDecoration.BOLD)
+            .clickEvent(ClickEvent.suggestCommand("/登录 " + info.userCode()))
+            .hoverEvent(HoverEvent.showText(Component.text("点击填入命令", NamedTextColor.GRAY))));
+    player.sendMessage(
+        Component.text(
+            "完成后将会自动通过验证（" + Math.max(1, info.expiresIn() / 60) + " 分钟内有效）",
+            NamedTextColor.DARK_GRAY));
+  }
+
+  private void sendActionBar(Player player, DeviceLoginInfo info) {
+    if (!player.isActive()) {
+      return;
+    }
+    player.sendActionBar(
+        Component.text()
+            .append(
+                Component.text("[点击登录]", NamedTextColor.YELLOW, TextDecoration.UNDERLINED)
+                    .clickEvent(ClickEvent.openUrl(info.verificationUri())))
+            .append(Component.text(" 或 /登录 " + info.userCode(), NamedTextColor.GRAY))
+            .build());
   }
 
   private void sendToLobby(Player player) {
@@ -354,6 +388,10 @@ public final class ControlPlugin {
     if (task != null) {
       task.cancel();
     }
+    ScheduledTask actionBar = state.actionBar;
+    if (actionBar != null) {
+      actionBar.cancel();
+    }
   }
 
   private void shutdown() {
@@ -378,6 +416,7 @@ public final class ControlPlugin {
   private static final class PendingLogin {
     private final DeviceLoginInfo info;
     private volatile ScheduledTask task;
+    private volatile ScheduledTask actionBar;
 
     private PendingLogin(DeviceLoginInfo info) {
       this.info = info;
