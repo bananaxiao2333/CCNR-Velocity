@@ -64,8 +64,13 @@ Java 17 · Velocity 3.4 · gRPC `control.v1`。
 | `heartbeat-seconds` | `60` | 心跳间隔，10–600 |
 | `queue-capacity` | `8192` | 遥测队列上限，满了丢新事件并告警 |
 | `proxy-id` | `velocity` | 代理实例标识，落 `proxy_sessions.proxy_id` |
+| `message.*` | 内置中文 | 玩家可见文案（登录提示、错误提示），可整段翻译 |
 
 越界或半配置 **启动失败并写 ERROR 日志**，不会静默钳制。
+
+`config.properties` 是**唯一的配置文件**：运行参数与玩家可见文案都在同一个文件里。
+`message.*` 删掉任意一行就回落到内置中文默认值，旧配置升级不会因为缺键启动失败；
+占位符 `{code}`（设备码）与 `{minutes}`（有效分钟数）保留原样，只翻译周围的字。
 
 ## 目录
 

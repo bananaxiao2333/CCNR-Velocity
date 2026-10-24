@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -47,6 +48,24 @@ class PluginConfigTest {
     assertEquals("proxy-a", config.proxyId());
     assertEquals("auth", config.authServer());
     assertEquals("lobby", config.lobbyServer());
+    assertEquals("请完成验证以确认登录", config.messages().text(Messages.LOGIN_HEADING));
+  }
+
+  @Test
+  void loadsMessageOverridesFromSameFile() throws IOException {
+    Path file =
+        write(
+            """
+                        endpoint=127.0.0.1:8081
+                        message.login.heading=Verify to sign in
+                        message.login.command=/verify {code}
+                        message.error.access-denied=Not allowed
+                        """);
+    PluginConfig config = PluginConfig.load(file);
+    assertEquals("Verify to sign in", config.messages().text(Messages.LOGIN_HEADING));
+    assertEquals(
+        "/verify ABCD", config.messages().format(Messages.LOGIN_COMMAND, Map.of("code", "ABCD")));
+    assertEquals("Not allowed", config.messages().text(Messages.ERROR_ACCESS_DENIED));
   }
 
   @Test

@@ -22,7 +22,8 @@ public record PluginConfig(
     int queueCapacity,
     String proxyId,
     String authServer,
-    String lobbyServer) {
+    String lobbyServer,
+    Messages messages) {
 
   private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z0-9][A-Za-z0-9_.:-]*");
 
@@ -59,7 +60,8 @@ public record PluginConfig(
         queue,
         proxyId,
         authServer,
-        lobbyServer);
+        lobbyServer,
+        Messages.load(properties));
   }
 
   private static String identifier(Properties properties, String key, String fallback) {

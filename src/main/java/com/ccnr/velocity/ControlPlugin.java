@@ -108,7 +108,7 @@ public final class ControlPlugin {
     }
     if (!verified.contains(player.getUniqueId().toString())) {
       logger.warn("{} 未经 Pass 验证就尝试进入 {}，断开", player.getUsername(), serverId);
-      player.disconnect(Component.text("请先完成 CCNR Pass 登录后再进入游戏服务器"));
+      player.disconnect(Component.text(config.messages().text(Messages.ERROR_NOT_VERIFIED)));
       return;
     }
     startOrSwitchSession(player, serverId);
@@ -148,7 +148,7 @@ public final class ControlPlugin {
           info.expiresIn());
     } catch (ControlUnavailableException error) {
       logger.warn("无法发起 CCNR Pass 登录：{}", error.getMessage());
-      player.disconnect(Component.text("CCNR Pass 暂时不可用，请稍后再试"));
+      player.disconnect(Component.text(config.messages().text(Messages.ERROR_PASS_UNAVAILABLE)));
     }
   }
 
@@ -172,7 +172,10 @@ public final class ControlPlugin {
       default -> {
         cancel(state);
         pending.remove(player.getUniqueId().toString());
-        String message = status.message().isBlank() ? "CCNR Pass 登录失败或已过期" : status.message();
+        String message =
+            status.message().isBlank()
+                ? config.messages().text(Messages.ERROR_LOGIN_FAILED)
+                : status.message();
         logger.info("{} CCNR Pass 登录未通过：{}", player.getUsername(), message);
         player.disconnect(Component.text(message));
       }
@@ -187,36 +190,57 @@ public final class ControlPlugin {
     if (!decision.allowed()) {
       logger.info("{} 通过 Pass 登录但准入被拒：{}", player.getUsername(), decision.reason());
       player.disconnect(
-          Component.text(decision.message().isBlank() ? "你无法进入服务器" : decision.message()));
+          Component.text(
+              decision.message().isBlank()
+                  ? config.messages().text(Messages.ERROR_ACCESS_DENIED)
+                  : decision.message()));
       return;
     }
     verified.add(player.getUniqueId().toString());
     logger.info("CCNR Pass 登录通过：{}（{}）", player.getUsername(), status.casdoorUserId());
     player.sendMessage(
-        Component.text("✔ 验证通过，正在进入游戏服…", NamedTextColor.GREEN, TextDecoration.BOLD));
+        Component.text(
+            config.messages().text(Messages.LOGIN_SUCCESS),
+            NamedTextColor.GREEN,
+            TextDecoration.BOLD));
     sendToLobby(player);
     // 最后再取消自己：先 cancel 会中断当前线程，把 AuthorizePlayer 变成 CANCELLED。
     cancel(state);
   }
 
   private void sendLoginPrompt(Player player, DeviceLoginInfo info) {
-    // 按钮独占一行，方便手机端直接点；下方给出机器人命令作为备用入口。
-    player.sendMessage(Component.text("━━━━━━━━ CCNR 通行证 ━━━━━━━━", NamedTextColor.GOLD));
-    player.sendMessage(Component.text("请完成验证以确认登录", NamedTextColor.YELLOW, TextDecoration.BOLD));
+    // 按钮独占一行，方便手机端直接点；下方给出机器人命令作为备用入口。文案全部走 Messages。
+    Messages messages = config.messages();
+    String code = info.userCode();
+    String minutes = String.valueOf(Math.max(1, info.expiresIn() / 60));
+    player.sendMessage(Component.text(messages.text(Messages.LOGIN_TITLE), NamedTextColor.GOLD));
     player.sendMessage(
         Component.text(
-                "[ 点击登录 ]", NamedTextColor.GREEN, TextDecoration.BOLD, TextDecoration.UNDERLINED)
+            messages.text(Messages.LOGIN_HEADING), NamedTextColor.YELLOW, TextDecoration.BOLD));
+    player.sendMessage(
+        Component.text(
+                messages.text(Messages.LOGIN_BUTTON),
+                NamedTextColor.GREEN,
+                TextDecoration.BOLD,
+                TextDecoration.UNDERLINED)
             .clickEvent(ClickEvent.openUrl(info.verificationUri()))
             .hoverEvent(
                 HoverEvent.showText(Component.text(info.verificationUri(), NamedTextColor.GRAY))));
-    player.sendMessage(Component.text("或者向 CCNR 行政服务发送下面的命令", NamedTextColor.GRAY));
     player.sendMessage(
-        Component.text("/登录 " + info.userCode(), NamedTextColor.AQUA, TextDecoration.BOLD)
-            .clickEvent(ClickEvent.suggestCommand("/登录 " + info.userCode()))
-            .hoverEvent(HoverEvent.showText(Component.text("点击填入命令", NamedTextColor.GRAY))));
+        Component.text(messages.text(Messages.LOGIN_OR_COMMAND), NamedTextColor.GRAY));
     player.sendMessage(
         Component.text(
-            "完成后将会自动通过验证（" + Math.max(1, info.expiresIn() / 60) + " 分钟内有效）",
+                messages.format(Messages.LOGIN_COMMAND, Map.of("code", code)),
+                NamedTextColor.AQUA,
+                TextDecoration.BOLD)
+            .clickEvent(ClickEvent.suggestCommand("/登录 " + code))
+            .hoverEvent(
+                HoverEvent.showText(
+                    Component.text(
+                        messages.text(Messages.LOGIN_HOVER_COMMAND), NamedTextColor.GRAY))));
+    player.sendMessage(
+        Component.text(
+            messages.format(Messages.LOGIN_FOOTER, Map.of("minutes", minutes)),
             NamedTextColor.DARK_GRAY));
   }
 
@@ -224,12 +248,20 @@ public final class ControlPlugin {
     if (!player.isActive()) {
       return;
     }
+    Messages messages = config.messages();
     player.sendActionBar(
         Component.text()
             .append(
-                Component.text("[点击登录]", NamedTextColor.YELLOW, TextDecoration.UNDERLINED)
+                Component.text(
+                        messages.text(Messages.LOGIN_ACTIONBAR),
+                        NamedTextColor.YELLOW,
+                        TextDecoration.UNDERLINED)
                     .clickEvent(ClickEvent.openUrl(info.verificationUri())))
-            .append(Component.text(" 或 /登录 " + info.userCode(), NamedTextColor.GRAY))
+            .append(Component.text(" ", NamedTextColor.GRAY))
+            .append(
+                Component.text(
+                    messages.format(Messages.LOGIN_ACTIONBAR_HINT, Map.of("code", info.userCode())),
+                    NamedTextColor.GRAY))
             .build());
   }
 
@@ -237,7 +269,7 @@ public final class ControlPlugin {
     Optional<RegisteredServer> lobby = server.getServer(config.lobbyServer());
     if (lobby.isEmpty()) {
       logger.error("velocity.toml 里没有 lobby 服：{}", config.lobbyServer());
-      player.disconnect(Component.text("游戏服暂不可用，请联系管理员"));
+      player.disconnect(Component.text(config.messages().text(Messages.ERROR_LOBBY_UNAVAILABLE)));
       return;
     }
     player.createConnectionRequest(lobby.get()).fireAndForget();
