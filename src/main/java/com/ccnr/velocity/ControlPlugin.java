@@ -233,7 +233,7 @@ public final class ControlPlugin {
                 messages.format(Messages.LOGIN_COMMAND, Map.of("code", code)),
                 NamedTextColor.AQUA,
                 TextDecoration.BOLD)
-            .clickEvent(ClickEvent.suggestCommand("/登录 " + code))
+            .clickEvent(ClickEvent.copyToClipboard("/登录 " + code))
             .hoverEvent(
                 HoverEvent.showText(
                     Component.text(
@@ -260,8 +260,10 @@ public final class ControlPlugin {
             .append(Component.text(" ", NamedTextColor.GRAY))
             .append(
                 Component.text(
-                    messages.format(Messages.LOGIN_ACTIONBAR_HINT, Map.of("code", info.userCode())),
-                    NamedTextColor.GRAY))
+                        messages.format(
+                            Messages.LOGIN_ACTIONBAR_HINT, Map.of("code", info.userCode())),
+                        NamedTextColor.GRAY)
+                    .clickEvent(ClickEvent.copyToClipboard("/登录 " + info.userCode())))
             .build());
   }
 

@@ -77,7 +77,7 @@ public final class Messages {
     defaults.put(LOGIN_ACTIONBAR, "[点击登录]");
     defaults.put(LOGIN_ACTIONBAR_HINT, "或 /登录 {code}");
     defaults.put(LOGIN_SUCCESS, "✔ 验证通过，正在进入游戏服…");
-    defaults.put(LOGIN_HOVER_COMMAND, "点击填入命令");
+    defaults.put(LOGIN_HOVER_COMMAND, "点击复制命令");
     defaults.put(ERROR_NOT_VERIFIED, "请先完成 CCNR Pass 登录后再进入游戏服务器");
     defaults.put(ERROR_PASS_UNAVAILABLE, "CCNR Pass 暂时不可用，请稍后再试");
     defaults.put(ERROR_LOBBY_UNAVAILABLE, "游戏服暂不可用，请联系管理员");
