@@ -24,7 +24,9 @@ Java 17 · Velocity 3.4 · gRPC `control.v1`。
 
 ## 构建与门禁
 
-只要求 **JDK 17+**（必须是 JDK，不能是 JRE）与网络；Gradle 由 wrapper 固定为 9.8.2。
+需要 **JDK 17–25**（推荐 21，与 CI 一致；必须是 JDK，不能是 JRE）与网络；
+Gradle 由 wrapper 固定为 9.8.2。JVM 26 与 Spotless 的 google-java-format 1.24 不兼容，
+本地遇到 `spotlessJava` 报 JVM 版本时请切到 JDK 21。
 
 ```bash
 ./scripts/check.sh          # spotlessCheck + 编译 + 单测 + shadowJar
@@ -92,6 +94,7 @@ scripts/                           check.sh / sync-proto.sh
 | [docs/01-工程规范](docs/01-工程规范.md) | 代码、日志、测试、门禁规则 |
 | [docs/02-协议与事件](docs/02-协议与事件.md) | 每个事件的语义与幂等键 |
 | [docs/03-部署与运维](docs/03-部署与运维.md) | 安装、排障、日志 |
+| [docs/04-发布](docs/04-发布.md) | 打 tag、CI 产物、版本约定 |
 | [docs/adr](docs/adr/README.md) | 关键取舍 |
 
 ## 许可
