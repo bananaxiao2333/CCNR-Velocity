@@ -1,5 +1,10 @@
 # CCNR-Velocity
 
+[![CI](https://github.com/bananaxiao2333/CCNR-Velocity/actions/workflows/ci.yml/badge.svg)](https://github.com/bananaxiao2333/CCNR-Velocity/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![java](https://img.shields.io/badge/java-17-ED8B00?logo=openjdk&logoColor=white)](build.gradle.kts)
+[![velocity](https://img.shields.io/badge/Velocity-3.4-1f6feb)](build.gradle.kts)
+
 Velocity 代理侧的 **CCNR Pass 设备码登录 + 会话遥测** 插件。
 Java 17 · Velocity 3.4 · gRPC `control.v1`。
 
